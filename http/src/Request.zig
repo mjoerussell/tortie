@@ -103,9 +103,32 @@ pub fn body(request: Request) ?[]const u8 {
     return null;
 }
 
+pub fn queryParam(request: Request, param_name: []const u8) ?[]const u8 {
+    if (request.uri()) |req_uri| {
+        const query_param_start = std.mem.indexOf(u8, req_uri, "?") orelse return null;
+        if (query_param_start >= req_uri.len - 1) return null;
+
+        const query_param_string = req_uri[query_param_start + 1 ..];
+        var query_params = std.mem.split(u8, query_param_string, "&");
+        while (query_params.next()) |param| {
+            const index_of_eq = std.mem.indexOf(u8, param, "=") orelse return null;
+            const current_param_name = param[0..index_of_eq];
+            const current_param_value = param[index_of_eq + 1 ..];
+            if (std.mem.eql(u8, current_param_name, param_name)) {
+                return current_param_value;
+            }
+        }
+    }
+    return null;
+}
+
 pub fn uriMatches(request: Request, test_uri: []const u8) bool {
     if (request.uri()) |req_uri| {
-        return std.mem.eql(u8, req_uri, test_uri);
+        const parts = std.mem.split(u8, req_uri, "?");
+        // Even if there's no '?' in the uri, it has to at least produce `req_uri` again
+        // on the first call to next()
+        const path = parts.next() orelse unreachable;
+        return std.mem.eql(u8, path, test_uri);
     } else {
         return false;
     }

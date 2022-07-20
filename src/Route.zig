@@ -12,5 +12,6 @@ uri: []const u8,
 handler: Handler,
 
 pub fn matches(route: Route, path: []const u8) bool {
-    return std.mem.eql(u8, route.uri, path);
+    const query_params_start = std.mem.indexOf(u8, path, "?") orelse path.len;
+    return std.mem.eql(u8, route.uri, path[0..query_params_start]);
 }
