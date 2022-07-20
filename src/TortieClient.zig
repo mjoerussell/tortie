@@ -128,41 +128,43 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
 
     // If this doesn't match an 'api' (as defined in route_handlers) then we'll assume that the user is trying to fetch a file
     // We'll use file_source to try to read the file. If there's an error, then we'll handle it appropriately.
-    const file_data = file_source.?.getFile(uri) catch |err| switch (err) {
-        error.FileNotFound => {
-            // The file either a) doesn't exist or b) is not one of the files registered in FileSource to be readable
-            log.warn("Client tried to get file {s}, but it could not be found", .{uri});
-            var response = http.Response.initStatus(allocator, .not_found);
-            try response.write(writer);
-            return;
-        },
-        else => {
-            // Some unknown error occurred, just send 500 back
-            log.err("Error when trying to get file {s}: {}", .{uri, err});
-            var response = http.Response.initStatus(allocator, .internal_server_error);
-            try response.write(writer);
-            return;
+    if (file_source) |fs| {
+        const file_data = fs.getFile(uri) catch |err| switch (err) {
+            error.FileNotFound => {
+                // The file either a) doesn't exist or b) is not one of the files registered in FileSource to be readable
+                log.warn("Client tried to get file {s}, but it could not be found", .{uri});
+                var response = http.Response.initStatus(allocator, .not_found);
+                try response.write(writer);
+                return;
+            },
+            else => {
+                // Some unknown error occurred, just send 500 back
+                log.err("Error when trying to get file {s}: {}", .{ uri, err });
+                var response = http.Response.initStatus(allocator, .internal_server_error);
+                try response.write(writer);
+                return;
+            },
+        };
+
+        // Start building the file response
+        // getContentType can't return null here because we know at this point that the file the client is fetching
+        // is a know file in FileSource, and all of the known files have valid file extensions for getContentType
+        const content_type = getContentType(uri).?;
+
+        var response = http.Response.init(allocator);
+        try response.header("Content-Length", file_data.len);
+        try response.header("Content-Type", content_type);
+        if (!fs.config.hot_reload) {
+            try response.header("Cache-Control", "max-age=3600");
         }
-    };
+        if (fs.config.should_compress) {
+            try response.header("Content-Encoding", "deflate");
+        }
+        response.body = file_data;
 
-    // Start building the file response
-    // getContentType can't return null here because we know at this point that the file the client is fetching
-    // is a know file in FileSource, and all of the known files have valid file extensions for getContentType
-    const content_type = getContentType(uri).?;
-    
-    var response = http.Response.init(allocator);    
-    try response.header("Content-Length", file_data.len);
-    try response.header("Content-Type", content_type);
-    if (!file_source.?.config.hot_reload) {
-        try response.header("Cache-Control", "max-age=3600");
+        // Send the response
+        try response.write(writer);
     }
-    if (file_source.?.config.should_compress) {
-        try response.header("Content-Encoding", "deflate");
-    }
-    response.body = file_data;
-
-    // Send the response
-    try response.write(writer);
 }
 
 /// Gets the content-type of a file using the file extension. Only supports css, html, js, wasm, and ico files currently
