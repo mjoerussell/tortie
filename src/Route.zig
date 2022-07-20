@@ -6,7 +6,7 @@ const FileSource = @import("FileSource.zig");
 
 const Route = @This();
 
-pub const Handler = fn (Allocator, ?FileSource, http.Request) anyerror!http.Response;
+pub const Handler = fn (Allocator, ?FileSource, http.Request) callconv(.Async) anyerror!http.Response;
 
 uri: []const u8,
 handler: Handler,

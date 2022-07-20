@@ -102,15 +102,19 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
         return;
     };
 
-    log.debug("Handling request for {s}", .{uri});
-
     for (routes) |route| {
         if (route.matches(uri)) {
-            var response = route.handler(allocator, file_source, request) catch |err| blk: {
-                log.err("Error handling request {s}: {}", .{uri, err});
+            log.debug("Handling request for {s}", .{uri});
+            var frame_buffer = try allocator.alignedAlloc(u8, 8, @frameSize(route.handler));
+            defer allocator.free(frame_buffer);
+
+            var response = await @asyncCall(frame_buffer, {}, route.handler, .{ allocator, file_source, request }) catch |err| blk: {
+                // var response = route.handler(allocator, file_source, request) catch |err| blk: {
+                log.err("Error handling request {s}: {}", .{ uri, err });
                 break :blk http.Response.initStatus(allocator, .internal_server_error);
             };
             try response.write(writer);
+            log.info("Finished writing response", .{});
             return;
         }
     }
