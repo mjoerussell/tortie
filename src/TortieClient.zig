@@ -3,7 +3,8 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Timer = std.time.Timer;
 
-const http = @import("http");
+const Request = @import("http/Request.zig");
+const Response = @import("http/Response.zig");
 
 const log = std.log.scoped(.tortie_client);
 
@@ -56,7 +57,7 @@ pub fn run(client: *TortieClient, file_source: ?FileSource, routes: []Route) voi
     client.handle_frame.* = async client.handle(file_source, routes);
 }
 
-fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !void {   
+fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !void {
     // Each client will only handle 1 request/response (http1.1), so after handling is complete we'll close the connection
     defer client.close();
     errdefer |err| {
@@ -70,10 +71,10 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
     const start_ts = timer.read();
 
     const allocator = client.arena.allocator();
-    
+
     // Don't need to explictly deinit because we'll be deiniting the arena allocator once this function completes
     var request_writer = std.ArrayList(u8).init(allocator);
-    
+
     var reader = client.common_client.reader();
     var writer = client.common_client.writer();
 
@@ -89,15 +90,15 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
     }
 
     // Get a request instance for the recieved data
-    var request = http.Request{ .data = request_writer.items };
+    var request = Request{ .data = request_writer.items };
     defer {
         const end_ts = timer.read();
         const uri = request.uri() orelse "/";
-        log.info("Thread {}: Handling request for {s} took {d:.6}ms", .{std.Thread.getCurrentId(), uri, (@intToFloat(f64, end_ts) - @intToFloat(f64, start_ts)) / std.time.ns_per_ms});
+        log.info("Thread {}: Handling request for {s} took {d:.6}ms", .{ std.Thread.getCurrentId(), uri, (@intToFloat(f64, end_ts) - @intToFloat(f64, start_ts)) / std.time.ns_per_ms });
     }
 
     const uri = request.uri() orelse {
-        var response = http.Response.initStatus(allocator, .bad_request);
+        var response = Response.initStatus(allocator, .bad_request);
         try response.write(writer);
         return;
     };
@@ -111,7 +112,7 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
             var response = await @asyncCall(frame_buffer, {}, route.handler, .{ allocator, file_source, request }) catch |err| blk: {
                 // var response = route.handler(allocator, file_source, request) catch |err| blk: {
                 log.err("Error handling request {s}: {}", .{ uri, err });
-                break :blk http.Response.initStatus(allocator, .internal_server_error);
+                break :blk Response.initStatus(allocator, .internal_server_error);
             };
             try response.write(writer);
             log.info("Finished writing response", .{});
@@ -121,7 +122,7 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
 
     if (file_source == null) {
         log.warn("Client tried to get file {s}, but no files are available", .{uri});
-        var response = http.Response.initStatus(allocator, .not_found);
+        var response = Response.initStatus(allocator, .not_found);
         try response.write(writer);
         return;
     }
@@ -133,14 +134,14 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
             error.FileNotFound => {
                 // The file either a) doesn't exist or b) is not one of the files registered in FileSource to be readable
                 log.warn("Client tried to get file {s}, but it could not be found", .{uri});
-                var response = http.Response.initStatus(allocator, .not_found);
+                var response = Response.initStatus(allocator, .not_found);
                 try response.write(writer);
                 return;
             },
             else => {
                 // Some unknown error occurred, just send 500 back
                 log.err("Error when trying to get file {s}: {}", .{ uri, err });
-                var response = http.Response.initStatus(allocator, .internal_server_error);
+                var response = Response.initStatus(allocator, .internal_server_error);
                 try response.write(writer);
                 return;
             },
@@ -151,7 +152,7 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
         // is a know file in FileSource, and all of the known files have valid file extensions for getContentType
         const content_type = getContentType(uri).?;
 
-        var response = http.Response.init(allocator);
+        var response = Response.init(allocator);
         try response.header("Content-Length", file_data.len);
         try response.header("Content-Type", content_type);
         if (!fs.config.hot_reload) {

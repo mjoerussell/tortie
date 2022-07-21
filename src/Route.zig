@@ -1,12 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const http = @import("http");
+const Request = @import("http/Request.zig");
+const Response = @import("http/Response.zig");
 const FileSource = @import("FileSource.zig");
 
 const Route = @This();
 
-pub const Handler = fn (Allocator, ?FileSource, http.Request) callconv(.Async) anyerror!http.Response;
+pub const Handler = fn (Allocator, ?FileSource, Request) callconv(.Async) anyerror!Response;
 
 uri: []const u8,
 handler: Handler,
