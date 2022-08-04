@@ -90,18 +90,17 @@ fn handle(client: *TortieClient, file_source: ?FileSource, routes: []Route) !voi
     }
 
     // Get a request instance for the recieved data
-    var request = Request{ .data = request_writer.items };
-    defer {
-        const end_ts = timer.read();
-        const uri = request.uri() orelse "/";
-        log.info("Thread {}: Handling request for {s} took {d:.6}ms", .{ std.Thread.getCurrentId(), uri, (@intToFloat(f64, end_ts) - @intToFloat(f64, start_ts)) / std.time.ns_per_ms });
-    }
-
-    const uri = request.uri() orelse {
+    var request = Request.parse(allocator, &request_buffer) catch {
         var response = try Response.initStatus(allocator, .bad_request);
         try response.write(writer);
         return;
     };
+    defer {
+        const end_ts = timer.read();
+        log.info("Thread {}: Handling request for {s} took {d:.6}ms", .{ std.Thread.getCurrentId(), request.uri, (@intToFloat(f64, end_ts) - @intToFloat(f64, start_ts)) / std.time.ns_per_ms });
+    }
+
+    const uri = request.uri;
 
     for (routes) |route| {
         if (route.matches(uri)) {
