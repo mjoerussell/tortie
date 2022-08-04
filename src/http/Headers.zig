@@ -73,7 +73,6 @@ pub fn deinit(headers: *Headers) void {
     headers.values.deinit();
     headers.data.deinit(headers.allocator);
     headers.keys.deinit(headers.allocator);
-    headers.allocator.free(headers.temp_buffer);
 }
 
 pub fn setHeader(headers: *Headers, header_name: []const u8, header_value: anytype) !void {
