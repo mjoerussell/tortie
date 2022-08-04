@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const Headers = @import("Headers.zig");
+
 const Request = @This();
 
 pub const HttpVersion = enum {
@@ -45,91 +47,95 @@ pub const HttpMethod = enum {
     }
 };
 
-data: []const u8,
+method: HttpMethod,
+version: HttpVersion,
+uri: []const u8,
 
-pub fn method(request: Request) ?HttpMethod {
-    var iter = std.mem.split(u8, request.data, " ");
-    const method_str = iter.next() orelse return null;
-    return HttpMethod.fromString(method_str) catch return null;
-}
+headers: Headers = null,
 
-pub fn uri(request: Request) ?[]const u8 {
-    var iter = std.mem.split(u8, request.data, " ");
-    _ = iter.next() orelse return null;
-    return iter.next();
-}
+body: ?[]const u8 = null,
 
-pub fn version(request: Request) ?HttpVersion {
-    const first_line_end = std.mem.indexOf(u8, request.data, "\r\n") orelse request.data.len;
-    var iter = std.mem.split(u8, request.data[0..first_line_end], " ");
-    _ = iter.next() orelse return null;
-    _ = iter.next() orelse return null;
-    const version_str = iter.next() orelse return null;
-    return HttpVersion.fromString(version_str) catch return null;
-}
+pub fn parse(allocator: Allocator, data: []const u8) !Request {
+    const ParseState = enum {
+        status,
+        headers,
+        body,
+    };
 
-pub fn header(request: Request, header_name: []const u8) ?std.mem.SplitIterator(u8) {
-    // @todo Multiple header values
-    var line_iter = std.mem.split(u8, request.data, "\r\n");
-    _ = line_iter.next() orelse return null;
+    var request: Request = undefined;
+    request.headers = try Headers.init(allocator);
+    errdefer request.headers.deinit();
 
-    while (line_iter.next()) |header_line| {
-        if (std.mem.startsWith(u8, header_line, header_name)) {
-            const delim_index = std.mem.indexOf(u8, header_line, ":") orelse return null;
-            const header_value = header_line[delim_index + 1..];
-            const trimmed = std.mem.trim(u8, header_value, " ");
-            return std.mem.split(u8, trimmed, ",");
-        }
-    }
+    var parse_state = ParseState.status;
+    var line_iter = std.mem.split(u8, data, "\r\n");
+    // var current_index: usize = 0;
 
-    return null;
-}
-
-pub fn body(request: Request) ?[]const u8 {
-    var line_iter = std.mem.split(u8, request.data, "\r\n");
+    // Increase current_index by the length of the line plus 2 to consider \r\n
+    // while (line_iter.next()) |line| : (current_index += line.len + 2) {
     while (line_iter.next()) |line| {
-        if (std.mem.trim(u8, line, " ").len == 0) {
-            // Two line breaks in a row, signalling the end of the headers and the start of the body
-            const body_start_index = line_iter.index orelse unreachable;
-            if (request.header("Content-Length")) |content_length| {
-                const length = std.fmt.parseInt(content_length) catch 0;
-                return request.data[body_start_index..body_start_index + length];
-            } else {
-                return request.data[body_start_index..];
-            }
+        switch (parse_state) {
+            .status => {
+                var parts = std.mem.split(u8, line, " ");
+                const method = parts.next() orelse return error.NoMethod;
+                request.method = try HttpMethod.fromString(method);
+
+                const uri = parts.next() orelse return error.NoUri;
+                request.uri = uri;
+
+                const version = parts.next() orelse return error.NoVersion;
+                request.version = try HttpVersion.fromString(version);
+
+                parse_state = .headers;
+            },
+            .headers => {
+                if (line.len == 0) {
+                    // Transition from headers -> body is indicated by "\r\n\r\n"
+                    parse_state = .body;
+                    continue;
+                }
+
+                const key_value_sep = std.mem.indexOf(u8, line, ":") orelse return error.InvalidHeader;
+                const key = std.mem.trim(u8, line[0..key_value_sep], " ");
+
+                var value_iter = std.mem.split(u8, line[key_value_sep + 1 ..], ",");
+                while (value_iter.next()) |value| {
+                    try request.headers.setHeader(key, std.mem.trim(u8, value, " "));
+                }
+            },
+            .body => {
+                // index has to have been initialized because the iterator has been called at least once.
+                const body_index = line_iter.index orelse unreachable;
+                request.body = data[body_index..];
+                // Exit out, there's nothing left to do
+                break;
+            },
         }
     }
 
-    return null;
+    return request;
 }
 
 pub fn queryParam(request: Request, param_name: []const u8) ?[]const u8 {
-    if (request.uri()) |req_uri| {
-        const query_param_start = std.mem.indexOf(u8, req_uri, "?") orelse return null;
-        if (query_param_start >= req_uri.len - 1) return null;
+    const query_param_start = std.mem.indexOf(u8, request.uri, "?") orelse return null;
+    if (query_param_start >= request.uri.len - 1) return null;
 
-        const query_param_string = req_uri[query_param_start + 1 ..];
-        var query_params = std.mem.split(u8, query_param_string, "&");
-        while (query_params.next()) |param| {
-            const index_of_eq = std.mem.indexOf(u8, param, "=") orelse return null;
-            const current_param_name = param[0..index_of_eq];
-            const current_param_value = param[index_of_eq + 1 ..];
-            if (std.mem.eql(u8, current_param_name, param_name)) {
-                return current_param_value;
-            }
+    const query_param_string = request.uri[query_param_start + 1 ..];
+    var query_params = std.mem.split(u8, query_param_string, "&");
+    while (query_params.next()) |param| {
+        const index_of_eq = std.mem.indexOf(u8, param, "=") orelse return null;
+        const current_param_name = param[0..index_of_eq];
+        const current_param_value = param[index_of_eq + 1 ..];
+        if (std.mem.eql(u8, current_param_name, param_name)) {
+            return current_param_value;
         }
     }
     return null;
 }
 
 pub fn uriMatches(request: Request, test_uri: []const u8) bool {
-    if (request.uri()) |req_uri| {
-        const parts = std.mem.split(u8, req_uri, "?");
-        // Even if there's no '?' in the uri, it has to at least produce `req_uri` again
-        // on the first call to next()
-        const path = parts.next() orelse unreachable;
-        return std.mem.eql(u8, path, test_uri);
-    } else {
-        return false;
-    }
+    const parts = std.mem.split(u8, request.uri, "?");
+    // Even if there's no '?' in the uri, it has to at least produce `req_uri` again
+    // on the first call to next()
+    const path = parts.next() orelse unreachable;
+    return std.mem.eql(u8, path, test_uri);
 }
