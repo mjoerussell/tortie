@@ -112,7 +112,7 @@ pub fn getFirstValue(headers: *Headers, header_name: []const u8) ?[]const u8 {
     return headers.data.items[@intCast(usize, range.start)..@intCast(usize, range.end)];
 }
 
-pub fn iterate(headers: *Headers) HeaderIterator {
+pub fn iterator(headers: *Headers) HeaderIterator {
     return HeaderIterator{
         .headers = headers,
     };
