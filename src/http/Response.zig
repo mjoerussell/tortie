@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const HttpVersion = @import("Request.zig").HttpVersion;
+const Headers = @import("Headers.zig");
 
 const Response = @This();
 
@@ -142,21 +143,21 @@ pub const ResponseStatus = enum(u32) {
 
 version: HttpVersion = .http_11,
 status: ResponseStatus = .ok,
-headers: std.StringHashMap([]const u8),
+headers: Headers,
 body: ?[]const u8 = null,
 
 allocator: Allocator,
 
-pub fn init(allocator: Allocator) Response {
+pub fn init(allocator: Allocator) !Response {
     return Response{
-        .headers = std.StringHashMap([]const u8).init(allocator),
+        .headers = try Headers.init(allocator),
         .allocator = allocator,
     };
 }
 
-pub fn initStatus(allocator: Allocator, status: ResponseStatus) Response {
+pub fn initStatus(allocator: Allocator, status: ResponseStatus) !Response {
     return Response{
-        .headers = std.StringHashMap([]const u8).init(allocator),
+        .headers = try Headers.init(allocator),
         .status = status,
         .allocator = allocator,
     };
@@ -166,24 +167,11 @@ pub fn deinit(response: *Response) void {
     response.headers.deinit();
 }
 
-pub fn header(response: *Response, header_name: []const u8, header_value: anytype) !void {
-    const header_str_value = if (comptime std.meta.trait.isZigString(@TypeOf(header_value))) 
-            header_value
-        else 
-            try std.fmt.allocPrint(response.allocator, "{}", .{header_value});
-    
-    var entry = try response.headers.getOrPut(header_name);
-    if (entry.found_existing) {
-        // This header has already been set, so append the new value to it instead of overwriting it
-        const concat_header_vals = try std.fmt.allocPrint(response.allocator, "{s}, {s}", .{entry.value_ptr.*, header_str_value});
-        entry.value_ptr.* = concat_header_vals;
-    } else {
-        // This header has not been set, so initialize it
-        entry.value_ptr.* = header_str_value;
-    }
+pub fn addHeader(response: *Response, header_name: []const u8, header_value: anytype) !void {
+    try response.headers.setHeader(header_name, header_value);
 }
 
-pub fn write(response: *const Response, writer: anytype) !void {
+pub fn write(response: *Response, writer: anytype) !void {
     const status_code = @enumToInt(response.status);
     const status_reason_phrase = response.status.getMessage();
 
@@ -191,13 +179,21 @@ pub fn write(response: *const Response, writer: anytype) !void {
 
     var header_iter = response.headers.iterator();
     while (header_iter.next()) |entry| {
-        try writer.print("{s}: {s}\r\n", .{entry.key_ptr.*, entry.value_ptr.*});
+        var header_value_iter = entry.values;
+        const first_value = header_value_iter.next() orelse continue;
+        try writer.print("{s}: {s}", .{ entry.key, first_value });
+
+        while (header_value_iter.next()) |header_value| {
+            try writer.print(", {s}", .{header_value});
+        }
+
+        try writer.writeAll("\r\n");
     }
 
     try writer.writeAll("\r\n");
 
     if (response.body) |body| {
-        if (response.headers.get("Transfer-Encoding")) |transfer_encoding| {
+        if (response.headers.getFirstValue("Transfer-Encoding")) |transfer_encoding| {
             if (std.ascii.eqlIgnoreCase(transfer_encoding, "chunked")) {
                 // Size of the chunk, in bytes
                 const chunk_size: usize = 200;
