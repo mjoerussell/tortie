@@ -11,6 +11,8 @@ pub fn link(exe: *std.build.LibExeObjStep, allocator: Allocator, package_path: [
     });
 }
 
+const test_files = [_][]const u8{ "src/http/Request.zig", "src/http/Uri.zig" };
+
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -32,6 +34,14 @@ pub fn build(b: *std.build.Builder) !void {
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
+    }
+
+    const test_step = b.step("test", "Run tests");
+    inline for (test_files) |filename| {
+        var t = b.addTest(filename);
+        t.setBuildMode(mode);
+        t.setTarget(target);
+        test_step.dependOn(&t.step);
     }
 
     const run_step = b.step("run", "Run the app");

@@ -36,14 +36,23 @@ pub const HttpMethod = enum {
     options,
 
     pub fn fromString(text: []const u8) !HttpMethod {
-        const eqlIgnoreCase = std.ascii.eqlIgnoreCase;
-        if (eqlIgnoreCase(text, "get")) return .get;
-        if (eqlIgnoreCase(text, "post")) return .post;
-        if (eqlIgnoreCase(text, "put")) return .put;
-        if (eqlIgnoreCase(text, "delete")) return .delete;
-        if (eqlIgnoreCase(text, "head")) return .head;
-        if (eqlIgnoreCase(text, "options")) return .options;
+        inline for (std.meta.fields(HttpMethod)) |field| {
+            if (std.ascii.endsWithIgnoreCase(text, field.name)) {
+                return comptime std.meta.stringToEnum(field.name);
+            }
+        }
         return error.UnknownMethod;
+    }
+
+    pub fn toString(method: HttpMethod) []const u8 {
+        return switch (method) {
+            .get => "GET",
+            .post => "POST",
+            .put => "PUT",
+            .delete => "DELETE",
+            .head => "HEAD",
+            .options => "OPTION",
+        };
     }
 };
 
@@ -51,7 +60,7 @@ method: HttpMethod,
 version: HttpVersion,
 uri: []const u8,
 
-headers: Headers = null,
+headers: Headers,
 
 body: ?[]const u8 = null,
 
@@ -68,11 +77,10 @@ pub fn parse(allocator: Allocator, data: []const u8) !Request {
 
     var parse_state = ParseState.status;
     var line_iter = std.mem.split(u8, data, "\r\n");
-    // var current_index: usize = 0;
 
     // Increase current_index by the length of the line plus 2 to consider \r\n
-    // while (line_iter.next()) |line| : (current_index += line.len + 2) {
-    while (line_iter.next()) |line| {
+    var index: usize = 0;
+    while (line_iter.next()) |line| : (index += line.len + 2) {
         switch (parse_state) {
             .status => {
                 var parts = std.mem.split(u8, line, " ");
@@ -104,15 +112,21 @@ pub fn parse(allocator: Allocator, data: []const u8) !Request {
             },
             .body => {
                 // index has to have been initialized because the iterator has been called at least once.
-                const body_index = line_iter.index orelse unreachable;
-                request.body = data[body_index..];
+                // const body_index = line_iter.index orelse unreachable;
+                const end_index = if (std.mem.endsWith(u8, data, "\r\n")) data.len - 2 else data.len;
+                // std.log.warn("Getting data in range [{}-{}]/{}", .{ index, body_end, data.len });
+                request.body = data[index..end_index];
                 // Exit out, there's nothing left to do
-                break;
+                return request;
             },
         }
     }
 
     return request;
+}
+
+pub fn deinit(request: *Request) void {
+    request.headers.deinit();
 }
 
 pub fn queryParam(request: Request, param_name: []const u8) ?[]const u8 {
@@ -138,4 +152,21 @@ pub fn uriMatches(request: Request, test_uri: []const u8) bool {
     // on the first call to next()
     const path = parts.next() orelse unreachable;
     return std.mem.eql(u8, path, test_uri);
+}
+
+test "parsing request" {
+    const request_data = "GET /path HTTP/1.1\r\nContent-Type: application/json\r\nAuthorization: Bearer abcd1234\r\n\r\nThis is the body\r\n";
+
+    var request = try Request.parse(std.testing.allocator, request_data);
+    defer request.deinit();
+
+    try std.testing.expectEqual(HttpMethod.get, request.method);
+    try std.testing.expectEqualStrings("/path", request.uri);
+
+    const content_type = request.headers.getFirstValue("content-type").?;
+    const authorization = request.headers.getFirstValue("authorization").?;
+
+    try std.testing.expectEqualStrings("application/json", content_type);
+    try std.testing.expectEqualStrings("Bearer abcd1234", authorization);
+    try std.testing.expectEqualStrings("This is the body", request.body.?);
 }
