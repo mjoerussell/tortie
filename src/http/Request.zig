@@ -38,7 +38,7 @@ pub const HttpMethod = enum {
     pub fn fromString(text: []const u8) !HttpMethod {
         inline for (std.meta.fields(HttpMethod)) |field| {
             if (std.ascii.endsWithIgnoreCase(text, field.name)) {
-                return comptime std.meta.stringToEnum(field.name);
+                return comptime std.meta.stringToEnum(HttpMethod, field.name) orelse unreachable;
             }
         }
         return error.UnknownMethod;
