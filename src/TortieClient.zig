@@ -33,7 +33,9 @@ pub fn init(allocator: Allocator, event_loop: *EventLoop, conn: Connection) !*To
         else => CommonClient.init(conn),
     };
 
-    if (builtin.os.tag != .windows and builtin.os.tag != .linux) _ = event_loop;
+    // comptime if (builtin.os.tag != .windows and builtin.os.tag != .linux) {
+    //     _ = event_loop;
+    // };
 
     client.common_client = common_client;
     client.arena = std.heap.ArenaAllocator.init(allocator);

@@ -111,10 +111,10 @@ pub fn parse(allocator: Allocator, data: []const u8) !Request {
                 }
             },
             .body => {
+                if (line.len == 0) return request;
                 // index has to have been initialized because the iterator has been called at least once.
                 // const body_index = line_iter.index orelse unreachable;
                 const end_index = if (std.mem.endsWith(u8, data, "\r\n")) data.len - 2 else data.len;
-                // std.log.warn("Getting data in range [{}-{}]/{}", .{ index, body_end, data.len });
                 request.body = data[index..end_index];
                 // Exit out, there's nothing left to do
                 return request;

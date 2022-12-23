@@ -136,8 +136,8 @@ fn addData(headers: *Headers, value: anytype) !StringRange {
     const value_is_str = comptime std.meta.trait.isZigString(@TypeOf(value));
     const data_start_len = headers.data.items.len;
 
-    const writer = headers.data.writer(headers.allocator);
-    if (value_is_str) {
+    var writer = headers.data.writer(headers.allocator);
+    if (comptime value_is_str) {
         try writer.writeAll(value);
     } else {
         try writer.print("{}", .{value});
