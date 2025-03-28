@@ -3,6 +3,6 @@ const Build = std.Build;
 
 pub fn build(b: *Build) !void {
     _ = b.addModule("tortie", .{
-        .root_source_file = .{ .path = "src/tortie.zig" },
+        .root_source_file = .{ .cwd_relative = "src/tortie.zig" },
     });
 }

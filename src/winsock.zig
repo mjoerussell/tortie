@@ -2,6 +2,8 @@ const std = @import("std");
 const os = std.os;
 const windows = os.windows;
 
+const socket_t = std.posix.socket_t;
+
 pub const OverlappedError = error{
     NotInitialized,
     NetworkDown,
@@ -41,8 +43,7 @@ pub const SendError = error{
     GeneralError,
 } || OverlappedError;
 
-// pub fn wsaRecv(socket: os.socket_t, buffer: []u8, overlapped: *windows.OVERLAPPED) RecvError!usize {
-pub fn wsaRecv(socket: os.socket_t, buffer: []u8, overlapped: *windows.OVERLAPPED) RecvError!void {
+pub fn wsaRecv(socket: socket_t, buffer: []u8, overlapped: *windows.OVERLAPPED) RecvError!void {
     var wsa_buf = windows.ws2_32.WSABUF{
         .buf = buffer.ptr,
         .len = @as(u32, @truncate(buffer.len)),
@@ -53,10 +54,6 @@ pub fn wsaRecv(socket: os.socket_t, buffer: []u8, overlapped: *windows.OVERLAPPE
     const result = windows.ws2_32.WSARecv(socket, @as([*]windows.ws2_32.WSABUF, @ptrCast(&wsa_buf)), 1, &bytes_recieved, &flags, overlapped, null);
     if (result != os.windows.ws2_32.SOCKET_ERROR) {
         return;
-        // return wsaGetOverlappedResult(socket, overlapped) catch |err| switch (err) {
-        //     error.InvalidEventHandle, error.NotInitialized, error.NotASocket => unreachable,
-        //     else => err,
-        // };
     }
 
     const last_error = windows.ws2_32.WSAGetLastError();
@@ -75,8 +72,7 @@ pub fn wsaRecv(socket: os.socket_t, buffer: []u8, overlapped: *windows.OVERLAPPE
     };
 }
 
-// pub fn wsaSend(socket: os.socket_t, buffer: []const u8, overlapped: *windows.OVERLAPPED) SendError!usize {
-pub fn wsaSend(socket: os.socket_t, buffer: []const u8, overlapped: *windows.OVERLAPPED) SendError!void {
+pub fn wsaSend(socket: socket_t, buffer: []const u8, overlapped: *windows.OVERLAPPED) SendError!void {
     var wsa_buf = windows.ws2_32.WSABUF{
         .buf = @as([*]u8, @ptrFromInt(@intFromPtr(buffer.ptr))),
         .len = @as(u32, @truncate(buffer.len)),
@@ -87,10 +83,6 @@ pub fn wsaSend(socket: os.socket_t, buffer: []const u8, overlapped: *windows.OVE
     const result = windows.ws2_32.WSASend(socket, @as([*]windows.ws2_32.WSABUF, @ptrCast(&wsa_buf)), 1, &bytes_sent, flags, overlapped, null);
     if (result != os.windows.ws2_32.SOCKET_ERROR) {
         return;
-        // return wsaGetOverlappedResult(socket, overlapped) catch |err| switch (err) {
-        //     error.InvalidEventHandle, error.NotInitialized, error.NotASocket => unreachable,
-        //     else => err,
-        // };
     }
 
     return switch (windows.ws2_32.WSAGetLastError()) {
@@ -108,7 +100,7 @@ pub fn wsaSend(socket: os.socket_t, buffer: []const u8, overlapped: *windows.OVE
     };
 }
 
-pub fn wsaGetOverlappedResult(socket: os.socket_t, overlapped: *windows.OVERLAPPED) OverlappedError!usize {
+pub fn wsaGetOverlappedResult(socket: socket_t, overlapped: *windows.OVERLAPPED) OverlappedError!usize {
     var bytes_recieved: u32 = 0;
     var flags: u32 = 0;
     const result = windows.ws2_32.WSAGetOverlappedResult(socket, overlapped, &bytes_recieved, windows.FALSE, &flags);
@@ -173,12 +165,12 @@ pub fn getQueuedCompletionStatusEx(completion_port: os.windows.HANDLE, overlappe
 }
 
 var lp_accept_ex: ?os.windows.ws2_32.LPFN_ACCEPTEX = null;
-pub fn acceptEx(listen_socket: os.socket_t, accept_socket: os.socket_t, data_buffer: []u8, bytes_recieved: *usize, overlapped: *os.windows.OVERLAPPED) !void {
+pub fn acceptEx(listen_socket: socket_t, accept_socket: socket_t, data_buffer: []u8, bytes_recieved: *usize, overlapped: *os.windows.OVERLAPPED) !void {
     if (lp_accept_ex == null) {
         try loadAcceptEx(listen_socket);
     }
 
-    const sockaddr_size = @sizeOf(os.sockaddr);
+    const sockaddr_size = @sizeOf(std.posix.sockaddr);
     const address_len = sockaddr_size + 16;
 
     const result = lp_accept_ex.?(listen_socket, accept_socket, @as(*anyopaque, @ptrCast(data_buffer.ptr)), 0, address_len, address_len, @as(*u32, @ptrCast(bytes_recieved)), overlapped);
@@ -202,7 +194,7 @@ pub fn acceptEx(listen_socket: os.socket_t, accept_socket: os.socket_t, data_buf
 const LPFN_DISCONNECTEX = *const fn (socket: os.windows.ws2_32.SOCKET, lpOverlapped: *os.windows.OVERLAPPED, dwFlags: u32, reserved: u32) callconv(os.windows.WINAPI) os.windows.BOOL;
 
 var lp_disconnect_ex: ?LPFN_DISCONNECTEX = null;
-pub fn disconnectEx(socket: os.socket_t, overlapped: *os.windows.OVERLAPPED, should_reuse_socket: bool) !void {
+pub fn disconnectEx(socket: socket_t, overlapped: *os.windows.OVERLAPPED, should_reuse_socket: bool) !void {
     if (lp_disconnect_ex == null) {
         try loadDisconnectEx(socket);
     }
@@ -225,7 +217,7 @@ pub fn disconnectEx(socket: os.socket_t, overlapped: *os.windows.OVERLAPPED, sho
     };
 }
 
-fn loadAcceptEx(listen_socket: os.socket_t) !void {
+fn loadAcceptEx(listen_socket: socket_t) !void {
     const guid_accept_ex = os.windows.ws2_32.WSAID_ACCEPTEX;
 
     var accept_ex_buf: [@sizeOf(@TypeOf(lp_accept_ex))]u8 = undefined;
@@ -241,7 +233,7 @@ pub const WSAID_DISCONNECTEX = os.windows.GUID{
     .Data4 = [8]u8{ 0xa0, 0x31, 0xf5, 0x36, 0xa6, 0xee, 0xc1, 0x57 },
 };
 
-fn loadDisconnectEx(socket: os.socket_t) !void {
+fn loadDisconnectEx(socket: socket_t) !void {
     const guid_disconnect_ex = WSAID_DISCONNECTEX;
     var disconnect_ex_buf: [@sizeOf(@TypeOf(lp_disconnect_ex))]u8 = undefined;
 

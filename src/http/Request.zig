@@ -87,7 +87,7 @@ pub fn getPath(request: Request) GeneralError![]const u8 {
 }
 
 pub fn findHeader(request: Request, header_name: []const u8) ?[]const u8 {
-    var line_iter = std.mem.split(u8, request.data, "\r\n");
+    var line_iter = std.mem.splitSequence(u8, request.data, "\r\n");
     _ = line_iter.next();
 
     while (line_iter.next()) |line| {
@@ -103,7 +103,7 @@ pub fn findHeader(request: Request, header_name: []const u8) ?[]const u8 {
 }
 
 pub fn getBody(request: Request) []const u8 {
-    var line_iter = std.mem.split(u8, request.data, "\r\n");
+    var line_iter = std.mem.splitSequence(u8, request.data, "\r\n");
 
     var index: usize = 0;
     while (line_iter.next()) |line| : (index += line.len + 2) {

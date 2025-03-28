@@ -9,6 +9,8 @@ const winsock = @import("winsock.zig");
 const Request = @import("http/Request.zig");
 const Response = @import("http/Response.zig");
 
+const socket_t = std.posix.socket_t;
+
 const log = std.log.scoped(.server);
 
 // @todo Better async handling. Right now there's no way to create a sequence of async events on a single client.
@@ -76,7 +78,7 @@ pub const ClientBuffers = struct {
 };
 
 pub const Client = struct {
-    socket: os.socket_t,
+    socket: socket_t,
 
     buffers: ClientBuffers,
 
@@ -105,7 +107,7 @@ pub const Client = struct {
 const WindowsServer = struct {
     const client_count = 256;
 
-    socket: os.socket_t = undefined,
+    socket: socket_t = undefined,
     clients: [client_count]Client = undefined,
     overlapped: []windows.OVERLAPPED = undefined,
 
@@ -121,7 +123,7 @@ const WindowsServer = struct {
         const socket = try server.getSocket();
         errdefer |err| {
             std.log.err("Error occurred while listening on address {}: {}", .{ address, err });
-            os.closeSocket(socket);
+            os.windows.closesocket(socket) catch {};
         }
 
         var io_mode: u32 = 1;
@@ -133,9 +135,9 @@ const WindowsServer = struct {
         errdefer server.deinit(allocator);
 
         var socklen = address.getOsSockLen();
-        try os.bind(socket, &address.any, socklen);
-        try os.listen(socket, 128);
-        try os.getsockname(socket, &server.listen_address.any, &socklen);
+        try std.posix.bind(socket, &address.any, socklen);
+        try std.posix.listen(socket, 128);
+        try std.posix.getsockname(socket, &server.listen_address.any, &socklen);
 
         _ = try os.windows.CreateIoCompletionPort(socket, server.io_port, undefined, 0);
 
@@ -184,7 +186,7 @@ const WindowsServer = struct {
 
                     // Since we couldn't gracefully disconnect the client, we'll shut down its socket and re-create
                     // it.
-                    os.closeSocket(client.socket);
+                    os.windows.closesocket(client.socket) catch {};
                     server.resetClient(client);
                 },
             }
@@ -240,7 +242,7 @@ const WindowsServer = struct {
             var client = server.clientFromOverlapped(entry.lpOverlapped);
             const bytes_transferred: usize = @intCast(entry.dwNumberOfBytesTransferred);
             if (client.state == .accepting) {
-                os.setsockopt(client.socket, os.windows.ws2_32.SOL.SOCKET, os.windows.ws2_32.SO.UPDATE_ACCEPT_CONTEXT, &std.mem.toBytes(server.socket)) catch |err| {
+                std.posix.setsockopt(client.socket, os.windows.ws2_32.SOL.SOCKET, os.windows.ws2_32.SO.UPDATE_ACCEPT_CONTEXT, &std.mem.toBytes(server.socket)) catch |err| {
                     std.log.err("Error during setsockopt: {}", .{err});
                 };
             } else if (client.state == .reading) {
@@ -277,9 +279,9 @@ const WindowsServer = struct {
         return entries_removed;
     }
 
-    fn getSocket(server: WindowsServer) !os.socket_t {
+    fn getSocket(server: WindowsServer) !socket_t {
         const flags = os.windows.ws2_32.WSA_FLAG_OVERLAPPED;
-        return try os.windows.WSASocketW(@as(i32, @intCast(server.listen_address.any.family)), @as(i32, os.SOCK.STREAM), @as(i32, os.IPPROTO.TCP), null, 0, flags);
+        return try os.windows.WSASocketW(@as(i32, @intCast(server.listen_address.any.family)), @as(i32, std.posix.SOCK.STREAM), @as(i32, std.posix.IPPROTO.TCP), null, 0, flags);
     }
 
     fn overlappedFromClient(server: *WindowsServer, client: *const Client) ?*windows.OVERLAPPED {
@@ -297,7 +299,7 @@ const WindowsServer = struct {
 };
 
 const LinuxServer = struct {
-    socket: os.socket_t = undefined,
+    socket: socket_t = undefined,
     clients: [256]Client = undefined,
     listen_address: net.Address = undefined,
     io_uring: std.os.linux.IO_Uring,
@@ -324,15 +326,15 @@ const LinuxServer = struct {
 
         const socket_flags = os.SOCK.STREAM;
         server.socket = try os.socket(address.any.family, socket_flags, os.IPPROTO.TCP);
-        errdefer os.closeSocket(server.socket);
+        errdefer std.posix.close(server.socket);
 
         var enable: u32 = 1;
-        try std.os.setsockopt(server.socket, os.SOL.SOCKET, os.SO.REUSEADDR, std.mem.asBytes(&enable));
+        try std.posix.setsockopt(server.socket, os.SOL.SOCKET, os.SO.REUSEADDR, std.mem.asBytes(&enable));
 
         var socklen = address.getOsSockLen();
-        try os.bind(server.socket, &address.any, socklen);
-        try os.listen(server.socket, 128);
-        try os.getsockname(server.socket, &server.listen_address.any, &socklen);
+        try std.posix.bind(server.socket, &address.any, socklen);
+        try std.posix.listen(server.socket, 128);
+        try std.posix.getsockname(server.socket, &server.listen_address.any, &socklen);
 
         for (&server.clients, 0..) |*client, index| {
             client.* = try Client.init(allocator);
@@ -346,7 +348,7 @@ const LinuxServer = struct {
     }
 
     pub fn deinit(server: *LinuxServer, _: Allocator) void {
-        os.closeSocket(server.socket);
+        std.posix.close(server.socket);
         for (&server.clients) |*client| client.deinit();
     }
 
